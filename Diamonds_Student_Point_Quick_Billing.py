@@ -604,48 +604,79 @@ class BillingApp:
         canvas.crop((0, 0, W, min(height, y+10))).save(out)
         return out
 
-    def print_text(self, text, filename, clear_after=False):
+        def print_text(self, text, filename, clear_after=False):
         image_path = self.make_receipt_image(text, filename)
 
-        # Direct Windows printer output using the installed/default printer.
         try:
             import win32print
             import win32ui
-            from PIL import ImageWin
+            from PIL import Image, ImageWin
 
-            printer_name = win32print.GetDefaultPrinter()
+            # Find Posiflow printer automatically
+            printers = win32print.EnumPrinters(
+                win32print.PRINTER_ENUM_LOCAL |
+                win32print.PRINTER_ENUM_CONNECTIONS
+            )
+
+            printer_name = None
+
+            for p in printers:
+                name = p[2]
+                if "posiflow" in name.lower():
+                    printer_name = name
+                    break
+
+            # If Posiflow is not found, use Windows default printer
+            if not printer_name:
+                printer_name = win32print.GetDefaultPrinter()
+
+            if not printer_name:
+                raise Exception("No Windows printer found.")
+
             dc = win32ui.CreateDC()
             dc.CreatePrinterDC(printer_name)
+
+            bmp = Image.open(image_path).convert("RGB")
+
+            # Printer printable width
+            printable_w = dc.GetDeviceCaps(8)
+
+            # Scale receipt to printer width
+            scale = printable_w / bmp.width
+
+            draw_w = max(1, int(bmp.width * scale))
+            draw_h = max(1, int(bmp.height * scale))
+
+            if scale != 1:
+                bmp = bmp.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
+
+            dib = ImageWin.Dib(bmp)
+
             dc.StartDoc("Diamond's Student Point Receipt")
             dc.StartPage()
 
-            bmp = Image.open(image_path).convert("RGB")
-            # Keep receipt width at 384 logical pixels; scale to printable width if needed.
-            dib = ImageWin.Dib(bmp)
-            printable_w = dc.GetDeviceCaps(8)   # HORZRES
-            printable_h = dc.GetDeviceCaps(10)  # VERTRES
-            ratio = min(printable_w / bmp.width, printable_h / bmp.height)
-            draw_w = max(1, int(bmp.width * ratio))
-            draw_h = max(1, int(bmp.height * ratio))
-            dib.draw(dc.GetHandleOutput(), (0, 0, draw_w, draw_h))
+            # Print from top-left
+            dib.draw(
+                dc.GetHandleOutput(),
+                (0, 0, draw_w, draw_h)
+            )
 
             dc.EndPage()
             dc.EndDoc()
             dc.DeleteDC()
+
+            messagebox.showinfo(
+                "Printed",
+                f"Bill printed successfully.\n\nPrinter:\n{printer_name}"
+            )
+
         except Exception as e:
-            messagebox.showwarning(
-                "Printing setup needed",
-                "Receipt image was created, but direct printing failed.\n\n"
-                f"Printer error: {e}\n\n"
-                "Make sure the Posiflow 58mm printer is installed and set as "
-                "the Windows default printer."
+            messagebox.showerror(
+                "Printing Error",
+                "Receipt was created, but printing failed.\n\n"
+                f"Printer error:\n{e}\n\n"
+                "Please check that the Posiflow printer is turned on."
             )
 
         if clear_after:
             self.clear_current()
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    BillingApp(root)
-    root.mainloop()
