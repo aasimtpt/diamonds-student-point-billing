@@ -20,9 +20,10 @@ class BillingApp:
         self.root.minsize(900, 620)
 
         self.rows = []
+        # Create the database/tables before reading the next bill number.
+        self.init_db()
         self.bill_no = self.load_bill_no()
 
-        self.init_db()
         self.build_ui()
         self.update_total()
 
@@ -31,6 +32,17 @@ class BillingApp:
         return sqlite3.connect(DB_PATH)
 
     def init_db(self):
+        # If an incomplete/corrupt database file exists, recreate it safely.
+        if os.path.exists(DB_PATH):
+            try:
+                with sqlite3.connect(DB_PATH) as test_con:
+                    test_con.execute("PRAGMA integrity_check").fetchone()
+            except sqlite3.DatabaseError:
+                try:
+                    os.remove(DB_PATH)
+                except OSError:
+                    pass
+
         with self.db() as con:
             con.execute("""
                 CREATE TABLE IF NOT EXISTS bills (
@@ -59,11 +71,13 @@ class BillingApp:
     def load_bill_no(self):
         try:
             with open(BILLNO_PATH, "r", encoding="utf-8") as f:
-                return int(f.read().strip())
-        except Exception:
+                value = int(f.read().strip())
+                return max(1, value)
+        except (FileNotFoundError, ValueError, OSError):
+            # Database tables have already been created in __init__.
             with self.db() as con:
-                row = con.execute("SELECT MAX(bill_no) FROM bills").fetchone()
-                return (row[0] + 1) if row and row[0] else 1
+                row = con.execute("SELECT COALESCE(MAX(bill_no), 0) FROM bills").fetchone()
+                return int(row[0]) + 1 if row else 1
 
     def save_bill_no(self):
         with open(BILLNO_PATH, "w", encoding="utf-8") as f:
