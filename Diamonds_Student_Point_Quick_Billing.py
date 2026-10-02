@@ -4,6 +4,12 @@ from datetime import datetime
 import os
 import sqlite3
 import tempfile
+from PIL import Image, ImageDraw, ImageFont
+import qrcode
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(BASE_DIR, "diamond_student_point_logo.png")
+UPI_ID = "diamondgraphicstpr@cnrb"
 
 SHOP_NAME = "DIAMOND'S STUDENT POINT"
 APP_DIR = os.path.join(os.path.expanduser("~"), "DiamondStudentPoint")
@@ -507,18 +513,133 @@ class BillingApp:
         bill_no, date_text, subtotal, discount, total, mode, received, change = b
         return self.make_receipt(bill_no, date_text, items, subtotal, discount, total, mode, received, change)
 
-    def print_text(self, text, filename, clear_after=False):
-        path = os.path.join(tempfile.gettempdir(), filename)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+    def make_qr(self, amount):
+        # UPI intent with fixed bill amount.
+        upi_url = (
+            f"upi://pay?pa={UPI_ID}"
+            f"&pn=Diamond%27s%20Student%20Point"
+            f"&am={amount:.2f}&cu=INR"
+        )
+        qr = qrcode.QRCode(version=None, box_size=7, border=2)
+        qr.add_data(upi_url)
+        qr.make(fit=True)
+        return qr.make_image(fill_color="black", back_color="white").convert("RGB")
+
+    def make_receipt_image(self, text, filename):
+        # 58mm receipt: render at 384px width, suitable for common 58mm printers.
+        W = 384
+        margin = 18
+        lines = text.splitlines()
+
         try:
-            os.startfile(path, "print")
+            font_bold = ImageFont.truetype("arialbd.ttf", 22)
+            font = ImageFont.truetype("arial.ttf", 17)
+            font_small = ImageFont.truetype("arial.ttf", 14)
         except Exception:
-            messagebox.showinfo(
-                "Receipt created",
-                f"Receipt saved here:\n{path}\n\n"
-                "Set the Posiflow 58mm printer as the Windows default printer."
+            font_bold = ImageFont.load_default()
+            font = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+
+        logo = None
+        if os.path.exists(LOGO_PATH):
+            try:
+                logo = Image.open(LOGO_PATH).convert("RGBA")
+                max_w = W - 36
+                ratio = min(max_w / logo.width, 110 / logo.height)
+                logo = logo.resize((max(1, int(logo.width * ratio)), max(1, int(logo.height * ratio))))
+            except Exception:
+                logo = None
+
+        # Extract total from receipt text for QR.
+        total = 0.0
+        for line in lines:
+            if line.startswith("TOTAL"):
+                try:
+                    total = float(line.split()[-1])
+                except Exception:
+                    pass
+
+        qr = self.make_qr(total)
+        qr_size = 150
+        qr.thumbnail((qr_size, qr_size))
+
+        line_h = 25
+        height = 90 + len(lines) * line_h + 180
+        canvas = Image.new("RGB", (W, height), "white")
+        draw = ImageDraw.Draw(canvas)
+
+        y = 10
+        if logo:
+            canvas.alpha_composite(logo, ((W - logo.width)//2, y))
+            y += logo.height + 10
+
+        for line in lines:
+            if not line:
+                y += 8
+                continue
+            is_total = line.startswith("TOTAL")
+            f = font_bold if is_total else font
+            bbox = draw.textbbox((0, 0), line, font=f)
+            tw = bbox[2] - bbox[0]
+            draw.text(((W - tw)//2, y), line, fill="black", font=f)
+            y += line_h + (3 if is_total else 0)
+
+        # QR section
+        y += 5
+        draw.line((margin, y, W-margin, y), fill="black", width=2)
+        y += 10
+        label = f"Scan to Pay ₹{total:.2f}"
+        bbox = draw.textbbox((0,0), label, font=font_bold)
+        draw.text(((W-(bbox[2]-bbox[0]))//2, y), label, fill="black", font=font_bold)
+        y += 30
+        canvas.paste(qr.resize((qr_size, qr_size)), ((W-qr_size)//2, y))
+        y += qr_size + 10
+        upi_label = f"UPI: {UPI_ID}"
+        bbox = draw.textbbox((0,0), upi_label, font=font_small)
+        draw.text(((W-(bbox[2]-bbox[0]))//2, y), upi_label, fill="black", font=font_small)
+        y += 28
+
+        out = os.path.join(tempfile.gettempdir(), filename.replace(".txt", ".png"))
+        canvas.crop((0, 0, W, min(height, y+10))).save(out)
+        return out
+
+    def print_text(self, text, filename, clear_after=False):
+        image_path = self.make_receipt_image(text, filename)
+
+        # Direct Windows printer output using the installed/default printer.
+        try:
+            import win32print
+            import win32ui
+            from PIL import ImageWin
+
+            printer_name = win32print.GetDefaultPrinter()
+            dc = win32ui.CreateDC()
+            dc.CreatePrinterDC(printer_name)
+            dc.StartDoc("Diamond's Student Point Receipt")
+            dc.StartPage()
+
+            bmp = Image.open(image_path).convert("RGB")
+            # Keep receipt width at 384 logical pixels; scale to printable width if needed.
+            dib = ImageWin.Dib(bmp)
+            printable_w = dc.GetDeviceCaps(8)   # HORZRES
+            printable_h = dc.GetDeviceCaps(10)  # VERTRES
+            ratio = min(printable_w / bmp.width, printable_h / bmp.height)
+            draw_w = max(1, int(bmp.width * ratio))
+            draw_h = max(1, int(bmp.height * ratio))
+            dib.draw(dc.GetHandleOutput(), (0, 0, draw_w, draw_h))
+
+            dc.EndPage()
+            dc.EndDoc()
+            dc.DeleteDC()
+        except Exception as e:
+            messagebox.showwarning(
+                "Printing setup needed",
+                "Receipt image was created, but direct printing failed.\n\n"
+                f"Printer error: {e}\n\n"
+                "Make sure the Posiflow 58mm printer is installed and set as "
+                "the Windows default printer."
             )
+
         if clear_after:
             self.clear_current()
 
