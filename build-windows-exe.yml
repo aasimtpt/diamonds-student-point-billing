@@ -15,11 +15,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pyinstaller pillow qrcode pywin32
 
       - name: Build EXE
-        run: python -m PyInstaller --onefile --windowed --name "Diamonds_Student_Point_Billing" "Diamonds_Student_Point_Quick_Billing.py"
+        shell: cmd
+        run: >
+          python -m PyInstaller --onefile --windowed
+          --name "Diamonds_Student_Point_Billing"
+          --add-data "diamond_student_point_logo.png;."
+          "Diamonds_Student_Point_Quick_Billing.py"
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
