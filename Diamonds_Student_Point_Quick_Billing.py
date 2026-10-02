@@ -604,7 +604,7 @@ class BillingApp:
         canvas.crop((0, 0, W, min(height, y+10))).save(out)
         return out
 
-        def print_text(self, text, filename, clear_after=False):
+    def print_text(self, text, filename, clear_after=False):
         image_path = self.make_receipt_image(text, filename)
 
         try:
