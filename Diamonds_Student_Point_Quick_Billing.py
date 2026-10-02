@@ -4,10 +4,11 @@ from datetime import datetime
 import os
 import sqlite3
 import tempfile
+import sys
 from PIL import Image, ImageDraw, ImageFont
 import qrcode
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 LOGO_PATH = os.path.join(BASE_DIR, "diamond_student_point_logo.png")
 UPI_ID = "diamondgraphicstpr@cnrb"
 
